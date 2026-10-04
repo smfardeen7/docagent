@@ -19,3 +19,6 @@ async def test_ingest_job_uses_engine_from_ctx(tmp_path):
 def test_worker_settings_register_the_job():
     assert ingest_document in WorkerSettings.functions
     assert WorkerSettings.max_tries == 2
+    # `arq --check` reads a heartbeat the worker writes every health_check_interval seconds; the container
+    # healthcheck and compose --wait depend on it being short.
+    assert WorkerSettings.health_check_interval == 30

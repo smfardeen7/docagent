@@ -22,3 +22,4 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = 2
     job_timeout = 600
+    health_check_interval = 30  # seconds between heartbeats read by `arq --check` (container healthcheck)
