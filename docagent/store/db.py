@@ -96,11 +96,18 @@ class Store:
         rows = {r["id"]: dict(r) for r in self._conn.execute(f"SELECT * FROM chunks WHERE id IN ({marks})", ids)}
         return [rows[i] for i in ids if i in rows]
 
-    def all_chunks(self) -> list[tuple[int, str]]:
+    def all_chunks(self, including: str | None = None) -> list[tuple[int, str]]:
+        """Chunks of ready documents, plus those of `including` (a document still being indexed)."""
         rows = self._conn.execute(
-            "SELECT c.id, c.text FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.status='ready' ORDER BY c.id"
+            "SELECT c.id, c.text FROM chunks c JOIN documents d ON d.id=c.doc_id "
+            "WHERE d.status='ready' OR c.doc_id=? ORDER BY c.id",
+            (including,),
         )
         return [(r["id"], r["text"]) for r in rows]
+
+    def delete_chunks(self, doc_id: str) -> int:
+        with self._lock:
+            return self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,)).rowcount
 
     def neighbors(self, chunk_id: int) -> list[dict]:
         c = self.get_chunk(chunk_id)

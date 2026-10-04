@@ -81,8 +81,16 @@ def _synthesize(question: str, evidence_ids: list[int], computed: list[str], sto
     return text, parse_citations(text, hits)
 
 
+def _evidence_order(cited: list[int], observed: list[int]) -> list[int]:
+    """Cited ids the model actually saw come first; then the newest observations fill the remaining slots."""
+    cited_seen = [i for i in cited if i in observed]
+    rest = [i for i in observed if i not in cited_seen]
+    room = MAX_EVIDENCE_CHUNKS - len(cited_seen)
+    return cited_seen + (rest[-room:] if room > 0 else [])
+
+
 def run_agent(question: str, registry: ToolRegistry, provider: LLMProvider, retriever: Retriever, store: Store,
-              max_steps: int = 6, max_new_tokens: int = 384,
+              max_steps: int = 6, max_new_tokens: int = 384, top_k: int = 5,
               on_step: Callable[[Step], None] | None = None) -> AgentResult:
     messages = [Message("system", build_agent_system_prompt(registry)), Message("user", f"Question: {question}")]
     steps: list[Step] = []
@@ -112,8 +120,7 @@ def run_agent(question: str, registry: ToolRegistry, provider: LLMProvider, retr
 
         if call.tool == "final_answer":
             record(Step(n, call.thought, call.tool, call.args, "done"))
-            cited = _clean_ids(call.args.get("citations", []))
-            evidence = cited + [i for i in observed if i not in cited]
+            evidence = _evidence_order(_clean_ids(call.args.get("citations", [])), observed)
             result = _synthesize(question, evidence, computed, store, provider, max_new_tokens)
             if result is None:
                 break
@@ -129,5 +136,5 @@ def run_agent(question: str, registry: ToolRegistry, provider: LLMProvider, retr
         messages.append(Message("assistant", json.dumps({"thought": call.thought, "tool": call.tool, "args": call.args})))
         messages.append(Message("user", f"Observation: {observation}"))
 
-    fallback = answer_question(question, retriever, provider, max_new_tokens=max_new_tokens)
+    fallback = answer_question(question, retriever, provider, top_k=top_k, max_new_tokens=max_new_tokens)
     return AgentResult(fallback.text, fallback.citations, steps, True, parse_failures)

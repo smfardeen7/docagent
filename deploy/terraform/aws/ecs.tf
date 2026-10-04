@@ -50,7 +50,10 @@ locals {
   } }
 }
 
-# ---------------------------------------------------------------- api
+# ------------------------------------------------- api + worker (one task)
+# SQLite WAL needs a shared-memory -shm file, so api and worker must share a
+# host. They run as two containers in ONE task, sharing a task-scoped
+# ephemeral "data" volume (no efs config = bind mount on the task's host).
 resource "aws_ecs_task_definition" "api" {
   family                   = "${var.project}-api"
   requires_compatibilities = ["FARGATE"]
@@ -60,16 +63,12 @@ resource "aws_ecs_task_definition" "api" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
+  ephemeral_storage {
+    size_in_gib = 30
+  }
+
   volume {
     name = "data"
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.this.id
-      transit_encryption = "ENABLED"
-      authorization_config {
-        access_point_id = aws_efs_access_point.data.id
-        iam             = "ENABLED"
-      }
-    }
   }
 
   volume {
@@ -84,23 +83,37 @@ resource "aws_ecs_task_definition" "api" {
     }
   }
 
-  container_definitions = jsonencode([{
-    name         = "api"
-    image        = local.api_image
-    essential    = true
-    portMappings = [{ name = "api", containerPort = 8000, protocol = "tcp", appProtocol = "http" }]
-    environment  = local.app_environment
-    secrets      = local.app_secrets
-    mountPoints  = local.app_mounts
-    healthCheck = {
-      command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
-      interval    = 30
-      timeout     = 5
-      retries     = 3
-      startPeriod = 120
-    }
-    logConfiguration = local.log_config["api"]
-  }])
+  container_definitions = jsonencode([
+    {
+      name              = "api"
+      image             = local.api_image
+      essential         = true
+      memoryReservation = 3072
+      portMappings      = [{ name = "api", containerPort = 8000, protocol = "tcp", appProtocol = "http" }]
+      environment       = local.app_environment
+      secrets           = local.app_secrets
+      mountPoints       = local.app_mounts
+      healthCheck = {
+        command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 120
+      }
+      logConfiguration = local.log_config["api"]
+    },
+    {
+      name              = "worker"
+      image             = local.api_image
+      essential         = true
+      memoryReservation = 4096
+      command           = ["arq", "docagent.worker.main.WorkerSettings"]
+      environment       = local.app_environment
+      secrets           = local.app_secrets
+      mountPoints       = local.app_mounts
+      logConfiguration  = local.log_config["worker"]
+    },
+  ])
 }
 
 resource "aws_ecs_service" "api" {
@@ -140,68 +153,6 @@ resource "aws_ecs_service" "api" {
   }
 
   depends_on = [aws_lb_listener.http, aws_efs_mount_target.this]
-}
-
-# ------------------------------------------------------------- worker
-resource "aws_ecs_task_definition" "worker" {
-  family                   = "${var.project}-worker"
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = var.worker_cpu
-  memory                   = var.worker_memory
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.task.arn
-
-  volume {
-    name = "data"
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.this.id
-      transit_encryption = "ENABLED"
-      authorization_config {
-        access_point_id = aws_efs_access_point.data.id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  volume {
-    name = "models"
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.this.id
-      transit_encryption = "ENABLED"
-      authorization_config {
-        access_point_id = aws_efs_access_point.models.id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  container_definitions = jsonencode([{
-    name             = "worker"
-    image            = local.api_image
-    essential        = true
-    command          = ["arq", "docagent.worker.main.WorkerSettings"]
-    environment      = local.app_environment
-    secrets          = local.app_secrets
-    mountPoints      = local.app_mounts
-    logConfiguration = local.log_config["worker"]
-  }])
-}
-
-resource "aws_ecs_service" "worker" {
-  name                   = "worker"
-  cluster                = aws_ecs_cluster.this.id
-  task_definition        = aws_ecs_task_definition.worker.arn
-  desired_count          = var.worker_desired_count
-  launch_type            = "FARGATE"
-  enable_execute_command = true
-
-  network_configuration {
-    subnets         = module.vpc.private_subnets
-    security_groups = [aws_security_group.tasks.id]
-  }
-
-  depends_on = [aws_efs_mount_target.this]
 }
 
 # ----------------------------------------------------------------- ui

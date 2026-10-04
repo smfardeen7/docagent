@@ -12,8 +12,10 @@ from docagent.settings import Settings
 
 
 def scripted(msgs):
-    if "Sources:" in msgs[-1].content:  # plain RAG prompt
+    if "Sources:" in msgs[-1].content:  # plain RAG prompt, or the agent's grounded synthesis
         return "Forty dollars [1]."
+    if not any(m.content.startswith("Observation:") for m in msgs):  # agent turn 1: gather evidence
+        return json.dumps({"thought": "s", "tool": "search_docs", "args": {"query": "meal limit", "k": 1}})
     return json.dumps({"thought": "a", "tool": "final_answer", "args": {"answer": "Forty.", "citations": [1]}})
 
 
@@ -43,10 +45,11 @@ def test_upload_query_agent_run_roundtrip(client):
     assert "Forty" in q["answer"] and q["citations"][0]["chunk_id"] >= 1 and q["run_id"]
     a = client.post("/agent/run", json={"question": "meal limit?"}).json()
     # the agent's final_answer cites chunk 1; the answer is then synthesized over that evidence
-    assert a["answer"] == "Forty dollars [1]." and a["fallback_used"] is False and a["steps"][0]["tool"] == "final_answer"
+    assert a["answer"] == "Forty dollars [1]." and a["fallback_used"] is False
+    assert [s["tool"] for s in a["steps"]] == ["search_docs", "final_answer"]
     assert a["citations"][0]["chunk_id"] == 1
     run = client.get(f"/runs/{a['run_id']}").json()
-    assert run["mode"] == "agent" and len(run["steps"]) == 1
+    assert run["mode"] == "agent" and len(run["steps"]) == 2
     assert client.get("/runs/nope").status_code == 404
     assert client.get("/documents/nope").status_code == 404
 

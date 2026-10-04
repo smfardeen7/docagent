@@ -47,10 +47,12 @@ redesign, is kept in [`docs/EVAL-run1-freeform-agent.md`](docs/EVAL-run1-freefor
 
 What the second run changed and why: run 1 showed the loss was in *answering*, not retrieval or tool use (95–98%
 valid tool calls). The model saw 300-character previews, rarely read chunks, and wrote confident wrong sentences.
-Now search results carry the chunk text, and `final_answer` triggers synthesis over the gathered chunks. Lookups
-went from 46.7% to 100%; arithmetic questions stay at 50% — the 1.5B model still mis-multiplies after calculating.
-Agent citation precision is lower than RAG's because the synthesis cites every evidence chunk it used, not only the
-gold one; the metric is reported as is.
+Now search results carry the chunk text, and `final_answer` triggers synthesis over the gathered chunks (up to 8,
+cited ones first). Lookups went from 46.7% to 100%; arithmetic questions went from 25% to 50% — the 1.5B model still
+mis-multiplies after calculating. In run 2 the agent fell back to single-pass RAG on 20% of questions (8 of 40, all
+8 answered correctly by the fallback); the agent's own synthesized answers scored 29 of 32. Agent citation precision
+is lower than RAG's because the synthesis cites every evidence chunk it used, not only the gold one; the metric is
+reported as is.
 
 ## Quickstart
 

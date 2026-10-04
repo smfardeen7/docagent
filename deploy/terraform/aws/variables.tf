@@ -41,27 +41,15 @@ variable "vpc_cidr" {
 }
 
 variable "api_cpu" {
-  description = "Fargate CPU units for the api task."
+  description = "Fargate CPU units for the combined api+worker task."
   type        = number
-  default     = 1024
+  default     = 2048
 }
 
 variable "api_memory" {
-  description = "Fargate memory (MiB) for the api task."
+  description = "Fargate memory (MiB) for the combined api+worker task."
   type        = number
-  default     = 4096
-}
-
-variable "worker_cpu" {
-  description = "Fargate CPU units for the worker task."
-  type        = number
-  default     = 1024
-}
-
-variable "worker_memory" {
-  description = "Fargate memory (MiB) for the worker task."
-  type        = number
-  default     = 4096
+  default     = 8192
 }
 
 variable "ui_cpu" {
@@ -77,15 +65,14 @@ variable "ui_memory" {
 }
 
 variable "api_desired_count" {
-  description = "Desired number of api tasks."
+  description = "Desired number of api(+worker) tasks. Must stay 1: each task has its own SQLite database."
   type        = number
   default     = 1
-}
 
-variable "worker_desired_count" {
-  description = "Desired number of worker tasks."
-  type        = number
-  default     = 1
+  validation {
+    condition     = var.api_desired_count == 1
+    error_message = "api_desired_count must be 1; extra tasks would each get an independent /data."
+  }
 }
 
 variable "ui_desired_count" {

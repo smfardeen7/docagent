@@ -9,7 +9,8 @@ fix small things on first apply.
 ```
 Internet -> ALB :80 --/        -> ui  (nginx, :80)  --http://api:8000--> api (:8000)
                     --/api/*   -> api (:8000)  (direct, no prefix rewrite)
-worker (arq) --> Redis (ElastiCache)      api + worker --> EFS (/data, /models)
+api task = [api + worker (arq)] --> Redis (ElastiCache)
+  /data = task ephemeral storage (shared by both containers), /models = EFS
 ```
 
 - **Primary path**: ALB default action forwards to `ui`. The ui's nginx proxies
@@ -20,9 +21,21 @@ worker (arq) --> Redis (ElastiCache)      api + worker --> EFS (/data, /models)
   group (health check `/healthz`). ALB cannot rewrite paths, so the api sees
   the `/api` prefix; use this only if the api serves under that prefix, and
   treat the UI proxy as the supported route.
-- **EFS**: one encrypted file system with two access points (`/data` and
-  `/models`, posix user 1000:1000), mounted by both api and worker. One file
-  system keeps cost and mount targets minimal.
+- **api + worker co-location**: api and worker are two containers in ONE ECS
+  task (one `api` service, desired count 1). SQLite in WAL mode
+  (`/data/docagent.db`) uses a shared-memory `-shm` file, so every process
+  touching the database, plus the on-disk index files, must be on the same
+  host. Over EFS/NFS WAL corrupts or errors, so `/data` is a task-scoped
+  ephemeral volume (30 GiB) bind-mounted into both containers.
+- **EFS**: one encrypted file system with a single `/models` access point
+  (posix user 1000:1000) used only as the model cache.
+- **Durability caveat**: `/data` is lost whenever the task is replaced
+  (deploy, crash, health-check failure). That is acceptable for a portfolio
+  deployment: re-upload documents. For durability, move metadata to Postgres
+  and the index to S3 or EFS-safe storage.
+- **No scaling out**: raising `api_desired_count` above 1 would create
+  independent databases and indexes per task (a validation blocks it). There
+  is intentionally no autoscaling/HPA.
 - **Redis**: single-node ElastiCache replication group (`cache.t4g.micro`) in
   private subnets; only the tasks SG can reach 6379.
 - **Network**: VPC module, 2 public + 2 private subnets, one NAT gateway.
@@ -57,12 +70,12 @@ The first api/worker start downloads models into `/models` on EFS and can be slo
 
 | Item | Approx. |
 |---|---|
-| Fargate: 2 x (1 vCPU / 4 GB) + 1 x (0.25 vCPU / 0.5 GB) | $75-85 |
+| Fargate: 1 x (2 vCPU / 8 GB) ~$70 + 1 x (0.25 vCPU / 0.5 GB) ~$9 | ~$80 |
 | NAT gateway (single) | $33 |
 | ALB | $18 |
 | ElastiCache cache.t4g.micro | $12 |
 | EFS (small) | pennies |
-| **Total** | **~$140-150** |
+| **Total** | **~$140-145** |
 
 ## Tear down
 
@@ -72,4 +85,4 @@ terraform destroy -var image_tag=v1
 
 ECR repos are created with `force_delete = true` so images do not block
 destroy. The Secrets Manager secret is deleted immediately (no recovery window).
-EFS contents (uploaded documents, model cache) are destroyed too.
+EFS contents (model cache) are destroyed too; uploaded documents live on task ephemeral storage and vanish with the task.

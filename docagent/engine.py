@@ -6,6 +6,7 @@ reloads when it changes, so new documents are visible without a restart.
 """
 
 import logging
+import threading
 import time
 import uuid
 from dataclasses import asdict
@@ -35,6 +36,7 @@ class Engine:
         self.reranker = reranker
         self._provider = provider
         self.chunker = Chunker(get_tokenizer(settings.embedding_model), settings.chunk_tokens, settings.chunk_overlap)
+        self._ingest_lock = threading.Lock()
         self._loaded_version = -1
         self.vector_index = VectorIndex(embedder.dim, settings.vector_backend)
         self.bm25_index = BM25Index.build([])
@@ -88,33 +90,47 @@ class Engine:
 
     # --- ingestion (worker side)
     def ingest(self, doc_id: str) -> int:
+        """Index one document. Serialized: concurrent ingests would add vectors to an index object that another
+        ingest is about to replace, silently losing them. Any failure marks the document `failed` with the reason
+        and removes its chunk rows, so a re-run starts clean; `ready` is set only after both index files and the
+        version file are on disk."""
+        with self._ingest_lock:
+            return self._ingest(doc_id)
+
+    def _ingest(self, doc_id: str) -> int:
         doc = self.store.get_document(doc_id)
         if doc is None:
             raise KeyError(doc_id)
         self.store.set_document_status(doc_id, "processing")
-        paths = list(self.settings.raw_dir.glob(f"{doc_id}.*"))
+        self.store.delete_chunks(doc_id)
         try:
+            paths = list(self.settings.raw_dir.glob(f"{doc_id}.*"))
             if not paths:
                 raise FileNotFoundError(f"raw file for {doc_id} missing")
             text = load_text(paths[0])
             chunks = self.chunker.split(text)
             if not chunks:
                 raise EmptyDocument("no chunks produced")
-        except (UnsupportedFileType, EmptyDocument, FileNotFoundError) as e:
-            self.store.set_document_status(doc_id, "failed", reason=str(e), n_chunks=0)
+            ids = self.store.add_chunks(doc_id, chunks)
+            vectors = self.embedder.encode([c.text for c in chunks])
+            self.reload_indexes_if_changed()
+            self.vector_index.add(ids, vectors)
+            self.bm25_index = BM25Index.build(self.store.all_chunks(including=doc_id))
+            self.vector_index.save(self.settings.index_dir)
+            self.bm25_index.save(self.settings.index_dir / BM25_FILE)
+            new_version = self._read_version() + 1
+            tmp = self._version_path.with_suffix(".tmp")
+            tmp.write_text(str(new_version))
+            tmp.replace(self._version_path)
+            self.store.set_document_status(doc_id, "ready", n_chunks=len(ids))
+        except Exception as e:  # noqa: BLE001 - every failure must land in the document's status
+            if not isinstance(e, (UnsupportedFileType, EmptyDocument, FileNotFoundError)):
+                log.exception("ingest %s failed", doc_id)
+            self.store.delete_chunks(doc_id)
+            self.store.set_document_status(doc_id, "failed", reason=str(e) or type(e).__name__, n_chunks=0)
+            self._loaded_version = -1  # drop any in-memory vectors added before the failure
+            self.reload_indexes_if_changed()
             return 0
-
-        ids = self.store.add_chunks(doc_id, chunks)
-        self.reload_indexes_if_changed()
-        self.vector_index.add(ids, self.embedder.encode([c.text for c in chunks]))
-        self.store.set_document_status(doc_id, "ready", n_chunks=len(ids))
-        self.bm25_index = BM25Index.build(self.store.all_chunks())
-        self.vector_index.save(self.settings.index_dir)
-        self.bm25_index.save(self.settings.index_dir / BM25_FILE)
-        new_version = self._read_version() + 1
-        tmp = self._version_path.with_suffix(".tmp")
-        tmp.write_text(str(new_version))
-        tmp.replace(self._version_path)
         self._loaded_version = -1
         self.reload_indexes_if_changed()
         log.info("ingested %s: %d chunks, index version %d", doc_id, len(ids), new_version)
@@ -144,6 +160,7 @@ class Engine:
         try:
             res = run_agent(question, self.tools, self.provider, self.retriever, self.store,
                             max_steps or self.settings.max_steps, self.settings.max_new_tokens,
+                            top_k=self.settings.top_k,
                             on_step=lambda s: self.store.add_trace_step(run_id, asdict(s)))
         except Exception:
             self.store.finish_run(run_id, None, [], "error", (time.perf_counter() - t0) * 1000)

@@ -1,5 +1,5 @@
-# One encrypted file system, two access points (/data and /models), both
-# owned by uid/gid 1000.
+# One encrypted file system with a single /models access point (model cache),
+# owned by uid/gid 1000. /data lives on task ephemeral storage, not EFS.
 resource "aws_security_group" "efs" {
   name        = "${var.project}-efs"
   description = "NFS access from ECS tasks"
@@ -28,24 +28,6 @@ resource "aws_efs_mount_target" "this" {
   file_system_id  = aws_efs_file_system.this.id
   subnet_id       = module.vpc.private_subnets[count.index]
   security_groups = [aws_security_group.efs.id]
-}
-
-resource "aws_efs_access_point" "data" {
-  file_system_id = aws_efs_file_system.this.id
-
-  posix_user {
-    uid = 1000
-    gid = 1000
-  }
-
-  root_directory {
-    path = "/data"
-    creation_info {
-      owner_uid   = 1000
-      owner_gid   = 1000
-      permissions = "0755"
-    }
-  }
 }
 
 resource "aws_efs_access_point" "models" {

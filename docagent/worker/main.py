@@ -22,4 +22,5 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = 2
     job_timeout = 600
+    max_jobs = 1  # ingestion appends to one on-disk index; Engine.ingest is also locked, this keeps jobs serial
     health_check_interval = 30  # seconds between heartbeats read by `arq --check` (container healthcheck)
