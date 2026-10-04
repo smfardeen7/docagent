@@ -31,9 +31,10 @@ services:
     volumes:
       - data:/data
       - models:/models
-    # The image's default HEALTHCHECK probes the API port; the worker has none, so check arq's heartbeat instead.
+    # The image's default HEALTHCHECK probes the API port; the worker has none, so check arq's heartbeat in
+    # Redis instead (a redis-only script: `arq --check` imports torch and can exceed the timeout on small runners).
     healthcheck:
-      test: ["CMD", "arq", "--check", "docagent.worker.main.WorkerSettings"]
+      test: ["CMD", "python", "scripts/worker_health.py"]
       interval: 15s
       timeout: 10s
       start_period: 120s

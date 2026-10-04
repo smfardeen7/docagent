@@ -18,6 +18,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then LOCK=requirements-cpu-arm64.txt; else L
     && uv pip install --system --no-cache --index-strategy unsafe-best-match -r "$LOCK"
 COPY pyproject.toml README.md ./
 COPY docagent ./docagent
+COPY scripts/worker_health.py ./scripts/worker_health.py
 RUN uv pip install --system --no-cache --no-deps -e .
 USER app
 EXPOSE 8000
