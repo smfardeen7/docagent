@@ -66,11 +66,12 @@ def test_agent_run_is_stored_with_trace(tmp_path):
     e._provider = FakeProvider([
         json.dumps({"thought": "s", "tool": "search_docs", "args": {"query": "leave"}}),
         json.dumps({"thought": "a", "tool": "final_answer", "args": {"answer": "Twelve weeks.", "citations": [1]}}),
+        "Parental leave is twelve weeks [1].",  # grounded synthesis over the gathered chunk
     ])
     res, run_id, _ = e.agent("how long is leave?")
     run = e.store.get_run(run_id)
     assert run["mode"] == "agent" and len(run["steps"]) == 2 and run["fallback_used"] is False
-    assert res.answer == "Twelve weeks." and run["citations"][0]["chunk_id"] == 1
+    assert res.answer == "Parental leave is twelve weeks [1]." and run["citations"][0]["chunk_id"] == 1
 
 
 def test_provider_error_marks_run_error_and_reraises(tmp_path):

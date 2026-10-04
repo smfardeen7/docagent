@@ -7,6 +7,8 @@ from docagent.store import Store
 
 from .calc import safe_calculate
 
+PREVIEW_CHARS = 700  # most 256-token chunks fit; the model sees the fact, not a teaser
+
 
 @dataclass
 class Tool:
@@ -52,11 +54,11 @@ class ToolRegistry:
 def build_default_tools(retriever: Retriever, store: Store) -> ToolRegistry:
     reg = ToolRegistry()
 
-    def search_docs(query: str, k: int = 5) -> str:
+    def search_docs(query: str, k: int = 3) -> str:
         hits = retriever.search(str(query), top_k=max(1, min(int(k), 10)))
         if not hits:
             return "no results"
-        return "\n".join(f"chunk_id={h.chunk_id} doc={h.doc_id} score={h.score:.3f}: {h.text[:300]}" for h in hits)
+        return "\n".join(f"chunk_id={h.chunk_id} doc={h.doc_id} score={h.score:.3f}: {h.text[:PREVIEW_CHARS]}" for h in hits)
 
     def read_chunk(chunk_id: int) -> str:
         rows = store.neighbors(int(chunk_id))
@@ -73,7 +75,7 @@ def build_default_tools(retriever: Retriever, store: Store) -> ToolRegistry:
     def calculate(expression: str) -> str:
         return safe_calculate(str(expression))
 
-    reg.register(Tool("search_docs", "Search the indexed documents.", {"query": "string", "k": "integer (1-10)"}, search_docs))
+    reg.register(Tool("search_docs", "Search the indexed documents; returns chunk_ids with their text.", {"query": "string", "k": "integer (1-10, default 3)"}, search_docs))
     reg.register(Tool("read_chunk", "Read a chunk with its neighbours.", {"chunk_id": "integer"}, read_chunk))
     reg.register(Tool("compare", "Show several chunks side by side.", {"chunk_ids": "[integer]"}, compare))
     reg.register(Tool("calculate", "Evaluate arithmetic.", {"expression": "string"}, calculate))

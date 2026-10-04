@@ -1,17 +1,35 @@
+"""ReAct agent: the model gathers evidence with tools, then the answer is synthesized from that evidence.
+
+The loop runs the model turn by turn. Each turn must be one JSON tool call. `search_docs`, `read_chunk` and
+`compare` observations contribute chunks to an evidence set; `calculate` observations are kept as computed
+values. When the model calls `final_answer`, the answer is NOT taken from the model's free text: it is generated
+with the cited-sources RAG prompt over the gathered chunks (cited ones first), with computed values appended to
+the question. This keeps small models honest — the measured gap between free-form agent answers and grounded
+synthesis was the reason for this design (see docs/EVAL.md).
+
+Fallback to single-pass RAG, flagged `fallback_used=True`, happens on: two consecutive unparseable turns, an
+exhausted step budget, `final_answer` with no evidence gathered, or an empty synthesis.
+"""
+
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from docagent.llm.base import LLMProvider, Message
-from docagent.rag.answer import Citation, answer_question
-from docagent.retrieve.retriever import Retriever
+from docagent.rag.answer import Citation, answer_question, parse_citations
+from docagent.rag.prompt import build_rag_messages
+from docagent.retrieve.retriever import Hit, Retriever
 from docagent.store import Store
 
 from .parser import ParseError, parse_tool_call
 from .prompt import build_agent_system_prompt
 from .tools import ToolRegistry
 
-MAX_OBSERVATION_CHARS = 2000
+MAX_OBSERVATION_CHARS = 4000
+MAX_EVIDENCE_CHUNKS = 8
+EVIDENCE_TOOLS = {"search_docs", "read_chunk", "compare"}
+_CHUNK_ID_RE = re.compile(r"(?:chunk_id=|\[chunk )(\d+)")
 
 
 @dataclass
@@ -32,24 +50,51 @@ class AgentResult:
     parse_failures: int = 0
 
 
-def _citations_from_ids(ids: object, store: Store) -> list[Citation]:
+def extract_chunk_ids(observation: str) -> list[int]:
+    """Chunk ids mentioned in a tool observation, in first-seen order."""
+    seen: list[int] = []
+    for m in _CHUNK_ID_RE.finditer(observation):
+        i = int(m.group(1))
+        if i not in seen:
+            seen.append(i)
+    return seen
+
+
+def _clean_ids(ids: object) -> list[int]:
     clean: list[int] = []
     for i in ids if isinstance(ids, list) else []:
         if isinstance(i, int) and not isinstance(i, bool) and i not in clean:
             clean.append(i)
-    rows = store.get_chunks(clean)
-    return [Citation(n, r["id"], r["doc_id"], r["ordinal"], r["text"]) for n, r in enumerate(rows, start=1)]
+    return clean
+
+
+def _synthesize(question: str, evidence_ids: list[int], computed: list[str], store: Store, provider: LLMProvider,
+                max_new_tokens: int) -> tuple[str, list[Citation]] | None:
+    rows = store.get_chunks(evidence_ids[:MAX_EVIDENCE_CHUNKS])
+    if not rows:
+        return None
+    hits = [Hit(r["id"], r["doc_id"], r["ordinal"], r["text"], 0.0) for r in rows]
+    q = question if not computed else f"{question}\n\nComputed values: " + "; ".join(computed)
+    text = provider.generate(build_rag_messages(q, hits), max_new_tokens=max_new_tokens).strip()
+    if not text:
+        return None
+    return text, parse_citations(text, hits)
 
 
 def run_agent(question: str, registry: ToolRegistry, provider: LLMProvider, retriever: Retriever, store: Store,
               max_steps: int = 6, max_new_tokens: int = 384,
               on_step: Callable[[Step], None] | None = None) -> AgentResult:
-    """ReAct loop. Two consecutive unparseable turns, an exhausted step budget, or an empty final answer
-    fall back to single-pass RAG; the result says so via fallback_used."""
     messages = [Message("system", build_agent_system_prompt(registry)), Message("user", f"Question: {question}")]
     steps: list[Step] = []
+    observed: list[int] = []
+    computed: list[str] = []
     parse_failures = 0
     consecutive_failures = 0
+
+    def record(step: Step) -> None:
+        steps.append(step)
+        if on_step:
+            on_step(step)
 
     for n in range(1, max_steps + 1):
         raw = provider.generate(messages, max_new_tokens=max_new_tokens)
@@ -66,21 +111,21 @@ def run_agent(question: str, registry: ToolRegistry, provider: LLMProvider, retr
         consecutive_failures = 0
 
         if call.tool == "final_answer":
-            answer = str(call.args.get("answer", "")).strip()
-            citations = _citations_from_ids(call.args.get("citations", []), store)
-            step = Step(n, call.thought, call.tool, call.args, "done")
-            steps.append(step)
-            if on_step:
-                on_step(step)
-            if answer:
-                return AgentResult(answer, citations, steps, False, parse_failures)
-            break
+            record(Step(n, call.thought, call.tool, call.args, "done"))
+            cited = _clean_ids(call.args.get("citations", []))
+            evidence = cited + [i for i in observed if i not in cited]
+            result = _synthesize(question, evidence, computed, store, provider, max_new_tokens)
+            if result is None:
+                break
+            text, citations = result
+            return AgentResult(text, citations, steps, False, parse_failures)
 
         observation = registry.call(call.tool, call.args)[:MAX_OBSERVATION_CHARS]
-        step = Step(n, call.thought, call.tool, call.args, observation)
-        steps.append(step)
-        if on_step:
-            on_step(step)
+        record(Step(n, call.thought, call.tool, call.args, observation))
+        if call.tool in EVIDENCE_TOOLS:
+            observed.extend(i for i in extract_chunk_ids(observation) if i not in observed)
+        elif call.tool == "calculate" and not observation.startswith("error"):
+            computed.append(f"{call.args.get('expression', '')} = {observation}")
         messages.append(Message("assistant", json.dumps({"thought": call.thought, "tool": call.tool, "args": call.args})))
         messages.append(Message("user", f"Observation: {observation}"))
 

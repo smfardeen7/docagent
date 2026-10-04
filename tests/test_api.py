@@ -42,7 +42,9 @@ def test_upload_query_agent_run_roundtrip(client):
     q = client.post("/query", json={"question": "meal limit?", "top_k": 1}).json()
     assert "Forty" in q["answer"] and q["citations"][0]["chunk_id"] >= 1 and q["run_id"]
     a = client.post("/agent/run", json={"question": "meal limit?"}).json()
-    assert a["answer"] == "Forty." and a["fallback_used"] is False and a["steps"][0]["tool"] == "final_answer"
+    # the agent's final_answer cites chunk 1; the answer is then synthesized over that evidence
+    assert a["answer"] == "Forty dollars [1]." and a["fallback_used"] is False and a["steps"][0]["tool"] == "final_answer"
+    assert a["citations"][0]["chunk_id"] == 1
     run = client.get(f"/runs/{a['run_id']}").json()
     assert run["mode"] == "agent" and len(run["steps"]) == 1
     assert client.get("/runs/nope").status_code == 404
