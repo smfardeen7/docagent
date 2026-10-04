@@ -1,0 +1,12 @@
+.venv
+.git
+.github
+.superpowers
+data*
+docs
+eval/results.json
+frontend
+deploy
+tests
+**/__pycache__
+*.pyc
