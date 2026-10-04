@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+mlruns/
+mlruns.db
+.env
+node_modules/
+dist/
+.pytest_cache/
