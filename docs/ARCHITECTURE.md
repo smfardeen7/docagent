@@ -30,10 +30,20 @@ markers back to chunk ids and drops duplicates and out-of-range numbers. The run
 **Agent.** `POST /agent/run` runs a ReAct loop. Each turn the model must reply with one JSON object
 `{"thought", "tool", "args"}`. The parser extracts the first balanced JSON object (code fences and prose
 around it are tolerated) and validates the shape. Tools (`search_docs`, `read_chunk`, `compare`,
-`calculate`) never raise into the loop; failures come back as `error: ...` observations. `final_answer`
-ends the run. Two consecutive unparseable turns, an exhausted step budget, or an empty final answer trigger a
+`calculate`) never raise into the loop; failures come back as `error: ...` observations. Chunk ids that appear
+in `search_docs`/`read_chunk`/`compare` observations are collected as *evidence*; `calculate` results are kept
+as *computed values*. When the model calls `final_answer`, the answer is not taken from its free text: the
+grounded RAG prompt is run over the evidence chunks (the ones the model cited first, then the rest it saw) with
+the computed values appended to the question, and the citations are parsed from that synthesis. Two consecutive
+unparseable turns, an exhausted step budget, a `final_answer` with no evidence, or an empty synthesis trigger a
 fallback to single-pass RAG, and the run is flagged `fallback_used`. Every step is written to `traces` as it
 happens, so a run that crashes mid-way still leaves its partial trace.
+
+Why the split between gathering and answering: the first evaluation run (`docs/EVAL-run1-freeform-agent.md`)
+measured retrieval recall@5 at 100% and single-pass RAG at 92.5% keyword hit rate, but the agent's free-form final
+answers at 47.5% — the 1.5B model saw short previews, rarely read chunks, and then wrote confident wrong
+sentences. Letting the agent decide *what* to read and the grounded prompt decide *what to say* is the fix the
+numbers pointed at; `docs/EVAL.md` has the re-measured result.
 
 ## Components
 
