@@ -1,14 +1,22 @@
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_vector_backend() -> str:
+    # faiss-cpu and torch each bundle libomp on macOS and abort the process when both load.
+    return "numpy" if sys.platform == "darwin" else "faiss"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCAGENT_", env_file=".env", extra="ignore")
 
     data_dir: Path = Path("data")
+    vector_backend: Literal["numpy", "faiss"] = Field(default_factory=_default_vector_backend)
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     generation_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
