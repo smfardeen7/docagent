@@ -61,9 +61,11 @@ Tools (each a function with a JSON-schema signature, registered in `agent/tools.
 
 Prompt format: system prompt lists tools with schemas and requires each turn to be exactly one JSON object `{"thought": str, "tool": str, "args": {}}`. The parser extracts the first balanced JSON object; anything else is a parse failure. Two consecutive failures, or reaching `max_steps` (default 6), triggers fallback to plain RAG, and the run is flagged `fallback_used=true`. This keeps the small local model honest: the eval reports the fallback rate rather than hiding it.
 
+**Revision (2026-10-04, after the first evaluation run).** `final_answer` no longer supplies the answer text. The loop records the chunk ids seen in `search_docs`/`read_chunk`/`compare` observations and the results of `calculate`; on `final_answer` it generates the answer with the plain-RAG cited-sources prompt over those chunks (cited ids first, up to 8) with computed values appended to the question, and parses citations from that output. `final_answer` with no gathered evidence, or an empty synthesis, also falls back to plain RAG. Reason: run 1 measured retrieval recall@5 100%, RAG keyword hit 92.5%, agent free-form answers 47.5% with 97.5% valid tool calls — the loss was in answering, not in retrieval or tool use. `search_docs` previews grew from 300 to 700 characters and default `k` from 5 to 3.
+
 ## Evaluation
 
-- Corpus: `eval/corpus/` — public-domain texts bundled in the repo (Project Gutenberg excerpts plus this project's own docs), so the eval is reproducible by anyone who clones.
+- Corpus: `eval/corpus/` — synthetic employee-handbook documents for a fictional company (CC0, written for this project), so the eval is reproducible by anyone who clones and no real policy is implied.
 - Questions: `eval/questions.jsonl` — about 40 items, each `{question, gold_doc, gold_chunk_substring, answer_keywords[]}` written by hand.
 - Metrics, computed by `python -m docagent.eval`:
   - Retrieval: recall@1/3/5 (gold substring appears in a returned chunk), MRR.
