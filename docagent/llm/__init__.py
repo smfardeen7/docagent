@@ -7,7 +7,8 @@ __all__ = ["LLMProvider", "Message", "FakeProvider", "make_provider"]
 def make_provider(settings) -> LLMProvider:
     """Build the configured provider lazily so importing this package never loads a model."""
     if settings.provider == "fake":
-        return FakeProvider([])
+        # Deployable stub for smoke tests: always answers with a citation to the first source.
+        return FakeProvider(lambda messages: "(fake provider) The answer is in source [1].")
     if settings.provider == "anthropic":
         from .anthropic_provider import AnthropicProvider
 

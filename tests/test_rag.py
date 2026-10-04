@@ -52,3 +52,13 @@ def test_fake_provider_exhausted_raises():
 def test_fake_provider_callable_form():
     p = FakeProvider(lambda msgs: f"echo:{msgs[-1].content}")
     assert p.generate([Message("user", "hi")]) == "echo:hi"
+
+
+def test_make_provider_fake_returns_a_cited_stub_answer():
+    from docagent.llm import make_provider
+    from docagent.settings import Settings
+
+    p = make_provider(Settings(provider="fake"))
+    text = p.generate([Message("user", "Sources:\n\n[1] x\n\nQuestion: y")])
+    assert "[1]" in text and p.name == "fake"
+    assert "[1]" in p.generate([Message("user", "again")])  # never exhausts
