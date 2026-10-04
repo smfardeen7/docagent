@@ -6,6 +6,8 @@ before answering. Runs entirely on a laptop with a local Hugging Face model; a h
 
 Everything claimed here is measured by `python -m docagent.eval` and written to [`docs/EVAL.md`](docs/EVAL.md).
 
+![DocAgent UI: a cited RAG answer, then an agent answer with its expanded tool trace](docs/img/ui.png)
+
 ```
 browser ── React/TS UI (nginx) ──► FastAPI api ──► SQLite  (documents, chunks, runs, traces)
                                      │  ▲          vector index + BM25  (on disk, versioned)
