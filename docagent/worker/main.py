@@ -13,7 +13,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 async def startup(ctx: dict) -> None:
-    ctx["engine"] = Engine.from_settings(get_settings())
+    engine = Engine.from_settings(get_settings())
+    ctx["engine"] = engine
+    logging.getLogger(__name__).info(
+        "worker engine ready: vector_backend=%s index_version=%d chunks=%d",
+        engine.settings.vector_backend, engine._read_version(), engine.store.count_ready_chunks(),
+    )
 
 
 class WorkerSettings:
