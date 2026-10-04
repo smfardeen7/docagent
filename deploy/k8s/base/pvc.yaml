@@ -1,0 +1,27 @@
+# NOTE: ReadWriteOnce is shared by api and worker pods, which works on a
+# single-node cluster (kind). A multi-node cluster needs RWX storage such as EFS.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docagent-data
+  labels:
+    app.kubernetes.io/name: docagent
+    app.kubernetes.io/component: api
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docagent-models
+  labels:
+    app.kubernetes.io/name: docagent
+    app.kubernetes.io/component: api
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi

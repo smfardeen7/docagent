@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app.kubernetes.io/name: docagent
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: docagent
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: docagent
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: docagent:local
+          imagePullPolicy: IfNotPresent
+          command: ["arq", "docagent.worker.main.WorkerSettings"]
+          envFrom:
+            - configMapRef:
+                name: docagent-config
+          # RWO volumes shared across pods: fine on single-node kind;
+          # multi-node clusters need RWX storage such as EFS.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: models
+              mountPath: /models
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: docagent-data
+        - name: models
+          persistentVolumeClaim:
+            claimName: docagent-models
